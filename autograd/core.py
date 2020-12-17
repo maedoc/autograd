@@ -14,9 +14,20 @@ def make_vjp(fun, x):
         def vjp(g): return backward_pass(g, end_node)
     return vjp, end_value
 
+import inspect
 def backward_pass(g, end_node):
+    print('bwd', end_node.fun)
     outgrads = {end_node : (g, False)}
-    for node in toposort(end_node):
+    for i, node in enumerate(toposort(end_node)):
+        if hasattr(node.fun, 'fun'):
+            #src = inspect.getsource(node.fun.fun)
+            print('\tfun', i, '---')
+            if isinstance(node.vjp, _vjp_lambda):
+                
+                print('\t\t', inspect.getsource(node.vjp.vjpfun),
+                        inspect.getsource(node.vjp.vjp), node.vjp.args)
+        else:
+            print('\tnofun', i, node.fun, node.vjp)
         outgrad = outgrads.pop(node)
         ingrads = node.vjp(outgrad[0])
         for parent, ingrad in zip(node.parents, ingrads):
@@ -24,8 +35,10 @@ def backward_pass(g, end_node):
     return outgrad[0]
 
 class VJPNode(Node):
-    __slots__ = ['parents', 'vjp']
+    #__slots__ = ['parents', 'vjp']
     def __init__(self, value, fun, args, kwargs, parent_argnums, parents):
+        self.fun = fun
+        self.args = args
         self.parents = parents
         try:
             vjpmaker = primitive_vjps[fun]
@@ -38,6 +51,8 @@ class VJPNode(Node):
     def initialize_root(self):
         self.parents = []
         self.vjp = lambda g: ()
+        self.fun = lambda : ()
+        self.args = ()
 
 primitive_vjps = {}
 def defvjp_argnums(fun, vjpmaker):
@@ -48,6 +63,16 @@ def defvjp_argnum(fun, vjpmaker):
         vjps = [vjpmaker(argnum, *args) for argnum in argnums]
         return lambda g: (vjp(g) for vjp in vjps)
     defvjp_argnums(fun, vjp_argnums)
+
+class _vjp_lambda:
+    def __init__(self, vjpfun, ans, *args, **kwargs):
+        self.vjpfun = vjpfun
+        self.ans = ans
+        self.args = args
+        self.kwargs = kwargs
+        self.vjp = vjpfun(ans, *args, **kwargs)
+    def __call__(self, g):
+        return (self.vjp(g),)
 
 def defvjp(fun, *vjpmakers, **kwargs):
     argnums = kwargs.get('argnums', count())
@@ -63,8 +88,9 @@ def defvjp(fun, *vjpmakers, **kwargs):
             except KeyError:
                 raise NotImplementedError(
                     "VJP of {} wrt argnum 0 not defined".format(fun.__name__))
-            vjp = vjpfun(ans, *args, **kwargs)
-            return lambda g: (vjp(g),)
+            #vjp = vjpfun(ans, *args, **kwargs)
+            #return lambda g: (vjp(g),)
+            return _vjp_lambda(vjpfun, ans, *args, **kwargs)
         elif L == 2:
             argnum_0, argnum_1 = argnums
             try:
